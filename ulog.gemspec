@@ -1,3 +1,6 @@
+# ulog.gemspec
+require_relative "lib/ulog/version"
+
 Gem::Specification.new do |s|
   s.name        = "ulog"
   s.version     = Ulog::VERSION
