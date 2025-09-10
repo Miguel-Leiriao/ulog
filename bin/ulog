@@ -1,0 +1,95 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Tenta usar a gem instalada; em desenvolvimento usa a lib local
+begin
+  require "ulog"
+rescue LoadError
+  require_relative "../lib/ulog"
+end
+
+def usage!
+  warn <<~TXT
+    ulog — CLI
+
+    Usage:
+      ulog write <path> --code N --sev <level> --ch <channel> [key=value ...]
+      ulog export <path> [--since <ISO8601|relative>] [--min-sev <level>]
+      ulog help
+
+    Examples:
+      ulog write app.mlog --code 123 --sev warn --ch sns sensor_id=7 ms=850
+      ulog export app.mlog --since 10m --min-sev info
+  TXT
+  exit 1
+end
+
+cmd = ARGV.shift or usage!
+
+case cmd
+when "help", "-h", "--help"
+  usage!
+
+when "write"
+  path = ARGV.shift or usage!
+  # opções obrigatórias
+  code_idx = ARGV.index("--code") or usage!
+  code = Integer(ARGV[code_idx + 1]) rescue usage!
+  sev_idx = ARGV.index("--sev") or usage!
+  severity = ARGV[sev_idx + 1] or usage!
+  ch_idx = ARGV.index("--ch") or usage!
+  channel = ARGV[ch_idx + 1] or usage!
+
+  # remove flags e valores do array
+  [ch_idx, sev_idx, code_idx].sort.reverse.each { |i| ARGV.slice!(i, 2) }
+
+  # parse do payload key=value
+  payload = {}
+  ARGV.each do |pair|
+    k, v = pair.split("=", 2)
+    next unless k && v
+    # tenta converter para Integer/Float; senão fica String
+    payload[k.to_sym] =
+      if v =~ /\A-?\d+\z/ then v.to_i
+      elsif v =~ /\A-?\d+\.\d+\z/ then v.to_f
+      else v
+      end
+  end
+
+  store = Ulog::Store.new(path)
+  store.write(code: code, severity: severity, channel: channel, payload: payload)
+  puts "Wrote event code=#{code} sev=#{severity} ch=#{channel} -> #{path}"
+
+when "export"
+  path = ARGV.shift or usage!
+  since = nil
+  min_sev = :trace
+
+  while ARGV.any?
+    case ARGV.first
+    when "--since"
+      ARGV.shift
+      val = ARGV.shift
+      # suportar "10m", "2h", "1d" ou ISO8601
+      if val =~ /\A(\d+)([smhd])\z/
+        num = $1.to_i; unit = $2
+        secs = { "s"=>1, "m"=>60, "h"=>3600, "d"=>86400 }[unit] * num
+        since = Time.now - secs
+      else
+        require "time"
+        since = Time.parse(val) rescue nil
+      end
+    when "--min-sev"
+      ARGV.shift
+      min_sev = (ARGV.shift || "trace").to_sym
+    else
+      break
+    end
+  end
+
+  store = Ulog::Store.new(path)
+  store.export(min_sev: min_sev, since: since)
+
+else
+  usage!
+end
