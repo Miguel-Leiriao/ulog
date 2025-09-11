@@ -19,8 +19,8 @@ module Ulog
     # code(vu) | sev(vu) | ch(vu) | ts_ms(vu) | len(vu) | payload(bytes)
     def write(code:, severity:, channel:, payload: nil, at: Time.now)
       ts_ms = ((at.to_f * 1000).to_i - @t0)
-      sev = to_code(severity)
-      ch  = to_code(channel)
+      sev = to_sev_code(severity)
+      ch  = to_ch_code(channel)
       data = JSON.dump(payload || {})
 
       rec = +"".b
@@ -36,7 +36,7 @@ module Ulog
 
     # Reads the binary file and prints a human-readable line per event.
     def export(io: $stdout, min_sev: :trace, since: nil)
-      min_sev_code = to_code(min_sev)
+      min_sev_code = to_sev_code(min_sev)
       File.open(@path, "rb") do |f|
         buf = f.read
         return if buf.nil? || buf.empty?
@@ -52,7 +52,8 @@ module Ulog
           next if sev < min_sev_code
           ts_abs = Time.at((@t0 + ts) / 1000.0).utc
           human = JSON.parse(data, symbolize_names: true) rescue {}
-          io.puts "#-#{code}-#{from_code(sev)}-#{from_code(ch)}-#{ts_abs.strftime("%H:%M:%S.%L")} #{human.inspect}"
+
+          io.puts "#-#{code}-#{from_sev_code(sev)}-#{from_ch_code(ch)}-#{ts_abs.strftime("%H:%M:%S.%L")} #{human.inspect}"
         end
       end
     end
@@ -65,16 +66,30 @@ module Ulog
     end
 
     # simple map for now (0..7 for severities, 0.8 for channels)
-    SEV = { trace:0, debug:1, info:2, warn:3, notice:4, error:5, crit:6, alert:7 }.freeze
-    CH  = { net:0, io:1, auth:2, sns:3, cfg:4, pwr:5, app:6, db:7, ui:8 }.freeze
+    SEV_TO = { trace:0, debug:1, info:2, warn:3, notice:4, error:5, crit:6, alert:7 }.freeze
+    CH_TO  = { net:0, io:1, auth:2, sns:3, cfg:4, pwr:5, app:6, db:7, ui:8 }.freeze
+    SEV_FROM = SEV_TO.invert.freeze
+    CH_FROM  = CH_TO.invert.freeze
 
-    # Accepts Integer, Symbol, or String (e.g., "warn")
-    def to_code(sym)
-      (SEV[sym] || CH[sym] || sym.to_i)
+    def to_sev_code(val)
+      return val if val.is_a?(Integer)
+      sym = val.is_a?(Symbol) ? val : val.to_s.downcase.to_sym
+      SEV_TO.fetch(sym) { Integer(val) rescue 0 }
     end
 
-    def from_code(n)
-      SEV.key(n) || CH.key(n) || n
+    def to_ch_code(val)
+      return val if val.is_a?(Integer)
+      sym = val.is_a?(Symbol) ? val : val.to_s.downcase.to_sym
+      CH_TO.fetch(sym) { Integer(val) rescue 0 }
+    end
+
+    # Accepts Integer, Symbol, or String (e.g., "warn")
+    def from_sev_code(n)
+      SEV_FROM[n] || n
+    end
+
+    def from_ch_code(n)
+      CH_FROM[n] || n
     end
   end
 end
