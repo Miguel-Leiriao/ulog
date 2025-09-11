@@ -23,7 +23,6 @@ module Ulog
       ts_ms = ((at.to_f * 1000).to_i - @t0)
       sev = to_sev_code(severity)
       ch  = to_ch_code(channel)
-      crc = CRC8.calc(rec)
       data = JSON.dump(payload || {})
 
       rec = +"".b
@@ -32,8 +31,10 @@ module Ulog
       rec << Varint.encode_u(ch)
       rec << Varint.encode_u(ts_ms)
       rec << Varint.encode_u(data.bytesize)
-      rec << crc.chr  
       rec << data
+
+      crc = CRC8.calc(rec)
+      rec << crc.chr  
 
       File.open(@path, "ab") { |f| f.write(rec) }
     end
