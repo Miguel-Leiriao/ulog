@@ -69,7 +69,7 @@ module Ulog
                 current_anchor = Varint.decode_u(sio)
                 next
               else
-                # recua se não era header
+                # not a header
                 sio.pos -= 3
               end
             else
