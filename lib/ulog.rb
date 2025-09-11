@@ -1,26 +1,80 @@
+# frozen_string_literal: true
 require "json"
 require "time"
+require "stringio"
 require_relative "ulog/version"
+require_relative "ulog/varint"
 
 module Ulog
   class Store
     def initialize(path, target_bytes: 256*1024, dict: nil)
       @path = path
-      File.write(@path, "") unless File.exist?(@path)
+      @target_bytes = target_bytes
+      @dict = dict
+      File.open(@path, "ab") {}
+      @t0 = file_birth_ms
     end
 
+    # Writes one binary record:
+    # code(vu) | sev(vu) | ch(vu) | ts_ms(vu) | len(vu) | payload(bytes)
     def write(code:, severity:, channel:, payload: nil, at: Time.now)
-      evt = { ts: at.utc.iso8601(3), code: code.to_i, sev: severity.to_s, ch: channel.to_s, payload: payload }
-      File.open(@path, "a") { |f| f.puts(evt.to_json) }
+      ts_ms = ((at.to_f * 1000).to_i - @t0)
+      sev = to_code(severity)
+      ch  = to_code(channel)
+      data = JSON.dump(payload || {})
+
+      rec = +"".b
+      rec << Varint.encode_u(code.to_i)
+      rec << Varint.encode_u(sev)
+      rec << Varint.encode_u(ch)
+      rec << Varint.encode_u(ts_ms)
+      rec << Varint.encode_u(data.bytesize)
+      rec << data
+
+      File.open(@path, "ab") { |f| f.write(rec) }
     end
 
+    # Reads the binary file and prints a human-readable line per event.
     def export(io: $stdout, min_sev: :trace, since: nil)
-      since_ts = since&.utc
-      File.foreach(@path) do |line|
-        evt = JSON.parse(line, symbolize_names: true)
-        next if since_ts && Time.parse(evt[:ts]) < since_ts
-        io.puts "#-#{evt[:code]}-#{evt[:sev]}-#{evt[:ch]}-#{evt[:ts]} #{evt[:payload].inspect if evt[:payload]}"
+      min_sev_code = to_code(min_sev)
+      File.open(@path, "rb") do |f|
+        buf = f.read
+        return if buf.nil? || buf.empty?
+        sio = StringIO.new(buf)
+        until sio.eof?
+          code = Varint.decode_u(sio)
+          sev  = Varint.decode_u(sio)
+          ch   = Varint.decode_u(sio)
+          ts   = Varint.decode_u(sio)
+          len  = Varint.decode_u(sio)
+          data = sio.read(len) || "".b
+
+          next if sev < min_sev_code
+          ts_abs = Time.at((@t0 + ts) / 1000.0).utc
+          human = JSON.parse(data, symbolize_names: true) rescue {}
+          io.puts "#-#{code}-#{from_code(sev)}-#{from_code(ch)}-#{ts_abs.strftime("%H:%M:%S.%L")} #{human.inspect}"
+        end
       end
+    end
+
+    private
+
+    def file_birth_ms
+      st = File.stat(@path)
+      ((st.ctime.to_f) * 1000).to_i
+    end
+
+    # simple map for now (0..7 for severities, 0.8 for channels)
+    SEV = { trace:0, debug:1, info:2, warn:3, notice:4, error:5, crit:6, alert:7 }.freeze
+    CH  = { net:0, io:1, auth:2, sns:3, cfg:4, pwr:5, app:6, db:7, ui:8 }.freeze
+
+    # Accepts Integer, Symbol, or String (e.g., "warn")
+    def to_code(sym)
+      (SEV[sym] || CH[sym] || sym.to_i)
+    end
+
+    def from_code(n)
+      SEV.key(n) || CH.key(n) || n
     end
   end
 end
