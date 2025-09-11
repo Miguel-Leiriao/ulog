@@ -30,6 +30,9 @@ jobs:
       - name: Build gem
         run: gem build ulog.gemspec
 
+      - name: Run smoke test
+        run: ruby script/smoke_test.rb
+
       - name: Upload .gem artifact
         uses: actions/upload-artifact@v4
         with:
