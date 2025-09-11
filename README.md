@@ -1,7 +1,5 @@
 # ulog
 
-[![Buy Me a Coffee](https://img.shields.io/badge/☕-Buy%20me%20a%20coffee-orange)](https://www.buymeacoffee.com/MiguelLeiriao)
-
 uLog is a **compact, uniform, and tamper-evident logging system**.  
 Designed for small applications, IoT devices, and microservices where memory is limited but **log quality and trust** are critical.  
 
