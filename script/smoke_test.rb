@@ -4,6 +4,7 @@
 
 require "fileutils"
 require "stringio"
+require "tmpdir"
 
 # Use library directly from repo (no need to install gem)
 $LOAD_PATH.unshift(File.expand_path("../lib", __dir__))
