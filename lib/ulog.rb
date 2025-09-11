@@ -9,18 +9,27 @@ require_relative "ulog/crc8"
 
 module Ulog
   class Store
-    def initialize(path, target_bytes: 256*1024, dict: nil)
+    MAGIC  = "UL".b    # 0x55 0x4C
+    V1     = 0x01
+    DEFAULT_BLOCK_BYTES = 64 * 1024
+
+    def initialize(path, target_bytes: 256*1024, dict: nil, block_target_bytes: DEFAULT_BLOCK_BYTES)
       @path = path
       @target_bytes = target_bytes
       @dict = dict
+      @block_target_bytes = block_target_bytes
+      
       File.open(@path, "ab") {}
-      @t0 = file_birth_ms
+      
+      start_new_block(Time.now)
     end
 
     # Writes one binary record:
     # code(vu) | sev(vu) | ch(vu) | ts_ms(vu) | len(vu) | payload(bytes)
     def write(code:, severity:, channel:, payload: nil, at: Time.now)
-      ts_ms = ((at.to_f * 1000).to_i - @t0)
+      rotate_block_if_needed!
+
+      delta_ms = (now_ms(at) - @t_anchor_ms)
       sev = to_sev_code(severity)
       ch  = to_ch_code(channel)
       data = JSON.dump(payload || {})
@@ -29,7 +38,7 @@ module Ulog
       rec << Varint.encode_u(code.to_i)
       rec << Varint.encode_u(sev)
       rec << Varint.encode_u(ch)
-      rec << Varint.encode_u(ts_ms)
+      rec << Varint.encode_u(delta_ms)
       rec << Varint.encode_u(data.bytesize)
       rec << data
 
@@ -37,23 +46,45 @@ module Ulog
       rec << crc.chr  
 
       File.open(@path, "ab") { |f| f.write(rec) }
+      @block_bytes += rec.bytesize
     end
 
     # Reads the binary file and prints a human-readable line per event.
     def export(io: $stdout, min_sev: :trace, since: nil)
       min_sev_code = to_sev_code(min_sev)
+      current_anchor = nil
+
       File.open(@path, "rb") do |f|
         buf = f.read
         return if buf.nil? || buf.empty?
         sio = StringIO.new(buf)
 
         until sio.eof?
+
+           if (b1 = sio.read(1))
+            if b1 == MAGIC.getbyte(0).chr
+              b2 = sio.read(1)
+              b3 = sio.read(1)
+              if b2 == MAGIC.getbyte(1).chr && b3 && b3.ord == V1
+                current_anchor = Varint.decode_u(sio)
+                next
+              else
+                # not a header
+                sio.pos -= 3
+              end
+            else
+              sio.pos -= 1
+            end
+          else
+            break
+          end
+
           start_pos = sio.pos
 
           code = Varint.decode_u(sio)
           sev  = Varint.decode_u(sio)
           ch   = Varint.decode_u(sio)
-          ts   = Varint.decode_u(sio)
+          dms  = Varint.decode_u(sio)
           len  = Varint.decode_u(sio)
           data = sio.read(len) || "".b
 
@@ -73,7 +104,8 @@ module Ulog
           end
 
           next if sev < min_sev_code
-          ts_abs = Time.at((@t0 + ts) / 1000.0).utc
+          anchor = current_anchor || file_birth_ms # fallback
+          ts_abs = Time.at((anchor + dms) / 1000.0).utc
           human = JSON.parse(data, symbolize_names: true) rescue {}
 
           tag = bad_crc ? " BAD_CRC" : ""
@@ -83,6 +115,25 @@ module Ulog
     end
 
     private
+
+    def start_new_block(at_time)
+      @t_anchor_ms = now_ms(at_time)
+      header = +"".b
+      header << MAGIC
+      header << V1.chr
+      header << Varint.encode_u(@t_anchor_ms)
+      File.open(@path, "ab") { |f| f.write(header) }
+      @block_bytes = 0
+    end
+
+    def rotate_block_if_needed!
+      if @block_bytes >= @block_target_bytes
+        start_new_block(Time.now)
+      end
+    end
+
+    def now_ms(t = Time.now) = (t.to_f * 1000).to_i
+
 
     def file_birth_ms
       st = File.stat(@path)
