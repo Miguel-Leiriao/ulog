@@ -4,6 +4,8 @@ require "time"
 require "stringio"
 require_relative "ulog/version"
 require_relative "ulog/varint"
+require_relative "ulog/crc8"
+
 
 module Ulog
   class Store
@@ -21,6 +23,7 @@ module Ulog
       ts_ms = ((at.to_f * 1000).to_i - @t0)
       sev = to_sev_code(severity)
       ch  = to_ch_code(channel)
+      crc = CRC8.calc(rec)
       data = JSON.dump(payload || {})
 
       rec = +"".b
@@ -29,6 +32,7 @@ module Ulog
       rec << Varint.encode_u(ch)
       rec << Varint.encode_u(ts_ms)
       rec << Varint.encode_u(data.bytesize)
+      rec << crc.chr  
       rec << data
 
       File.open(@path, "ab") { |f| f.write(rec) }
@@ -42,6 +46,8 @@ module Ulog
         return if buf.nil? || buf.empty?
         sio = StringIO.new(buf)
         until sio.eof?
+          start_pos = sio.pos
+
           code = Varint.decode_u(sio)
           sev  = Varint.decode_u(sio)
           ch   = Varint.decode_u(sio)
@@ -49,11 +55,26 @@ module Ulog
           len  = Varint.decode_u(sio)
           data = sio.read(len) || "".b
 
+          # Reads recorded CRC (1 byte). if its missing, we branded it as corrupted and abort.
+          crc_byte = sio.read(1)
+          bad_crc = false
+          if crc_byte && crc_byte.bytesize == 1
+            end_pos = sio.pos
+            sio.pos = start_pos
+            rec_bytes = sio.read(end_pos - start_pos - 1) # tudo menos o CRC
+            sio.pos = end_pos
+            expected = CRC8.calc(rec_bytes)
+            actual = crc_byte.ord
+            bad_crc = (expected != actual)
+          else
+            bad_crc = true
+          end
+
           next if sev < min_sev_code
           ts_abs = Time.at((@t0 + ts) / 1000.0).utc
           human = JSON.parse(data, symbolize_names: true) rescue {}
 
-          io.puts "#-#{code}-#{from_sev_code(sev)}-#{from_ch_code(ch)}-#{ts_abs.strftime("%H:%M:%S.%L")} #{human.inspect}"
+          io.puts "#-#{code}-#{from_sev_code(sev)}-#{from_ch_code(ch)}-#{ts_abs.strftime("%H:%M:%S.%L")}#{tag} #{human.inspect}"
         end
       end
     end
