@@ -32,6 +32,9 @@ jobs:
 
       - name: Run smoke test
         run: ruby script/smoke_test.rb
+      
+      - name: Run CRC8 test
+        run: ruby script/smoke_crc8.rb
 
       - name: Upload .gem artifact
         uses: actions/upload-artifact@v4
