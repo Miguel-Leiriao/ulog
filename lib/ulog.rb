@@ -38,7 +38,7 @@ module Ulog
       rec << Varint.encode_u(code.to_i)
       rec << Varint.encode_u(sev)
       rec << Varint.encode_u(ch)
-      rec << Varint.encode_u(ts_ms)
+      rec << Varint.encode_u(delta_ms)
       rec << Varint.encode_u(data.bytesize)
       rec << data
 
