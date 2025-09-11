@@ -46,6 +46,7 @@ module Ulog
         buf = f.read
         return if buf.nil? || buf.empty?
         sio = StringIO.new(buf)
+
         until sio.eof?
           start_pos = sio.pos
 
@@ -62,7 +63,7 @@ module Ulog
           if crc_byte && crc_byte.bytesize == 1
             end_pos = sio.pos
             sio.pos = start_pos
-            rec_bytes = sio.read(end_pos - start_pos - 1) # tudo menos o CRC
+            rec_bytes = sio.read(end_pos - start_pos - 1) # everything except CRC
             sio.pos = end_pos
             expected = CRC8.calc(rec_bytes)
             actual = crc_byte.ord
@@ -75,6 +76,7 @@ module Ulog
           ts_abs = Time.at((@t0 + ts) / 1000.0).utc
           human = JSON.parse(data, symbolize_names: true) rescue {}
 
+          tag = bad_crc ? " BAD_CRC" : ""
           io.puts "#-#{code}-#{from_sev_code(sev)}-#{from_ch_code(ch)}-#{ts_abs.strftime("%H:%M:%S.%L")}#{tag} #{human.inspect}"
         end
       end
